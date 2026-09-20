@@ -160,8 +160,16 @@ def classify_senders(conn) -> None:
         first = _first_message(conn, address)
         guess = _llm_guess(name, address, first) if first else None
         if guess is None:
-            # No API key or model failure: leave a low-confidence service
-            # guess; it lands in New senders for the user to sort.
+            if not config.OPENROUTER_API_KEY:
+                # No model access in this run: leave the tier NULL so the
+                # next run with a key classifies it, instead of freezing a
+                # wrong guess.
+                _save_sender(conn, address, name, None, None,
+                             {**stats, "why": "pending classification"},
+                             confirmed=0)
+                continue
+            # Model failure with a key present: a low-confidence service
+            # guess that lands in New senders for the user to sort.
             guess = {"tier": "service", "route": "heads_up", "subrules": {},
                      "confidence": 0.0, "reason": "not classified yet"}
 
