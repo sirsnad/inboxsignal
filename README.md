@@ -1,7 +1,67 @@
-# Signal Inbox handoff
+# Signal Inbox
 
-1. PROMPT.md   paste into Claude Code to start
-2. SPEC.md     product + technical spec (Claude Code reads this first)
-3. mockups/    five HTML mockups from the design canvas
+A personal view on top of Gmail that turns ~30 daily arrivals into a short
+briefing. Spec in `SPEC.md`, design mockups in `mockups/`, original build
+prompt in `PROMPT.md`.
 
-Design canvas (live): https://claude.ai/artifact/LvXh5AWL663ZkJ7o48qqmR
+**Status: Phase 3 (lanes, palette, phone) - all three build phases done.**
+
+- Phase 1: read-only mirror - OAuth, 30-day backfill, sender-rule guessing,
+  email-type classification, the Today screen and reading pane.
+- Phase 2: actions - done/snooze with `Signal/` labels, replies through
+  Gmail with a voice-matched starter and a 12-second hold, Yes/No on
+  Needs-you rows, New-senders sorting, rule edits, the undoable actions log.
+- Phase 3: lane digests with per-source parsers (Realtor.com, Zillow,
+  LinkedIn Jobs, RotoReels) and a Claude fallback extractor, deduped by
+  address; the lane screen with cadence/snooze; the Promotions weekly digest
+  with RFC 8058 one-click / mailto unsubscribe (held 12s, undoable, never a
+  body link); the Cmd+K palette and Y/N/G/R/D/S single keys; the phone
+  layout with bottom tabs.
+
+The app never deletes, trashes, or archives, and never touches labels
+outside `Signal/`. Scopes: readonly + modify (labels only) + send; a
+Phase 1 `token.json` needs deleting and one re-consent.
+
+## Run the demo (no Gmail needed)
+
+```bash
+pip install -r requirements.txt
+SIGNAL_DB_PATH=demo.db python -m scripts.seed_demo
+SIGNAL_DB_PATH=demo.db SIGNAL_DEMO=1 uvicorn app.main:app --port 8000
+# open http://127.0.0.1:8000
+```
+
+## Run against the real inbox
+
+1. **OpenRouter key** - copy `.env.example` to `.env` and set
+   `OPENROUTER_API_KEY`. Models per task are configurable there too
+   (defaults: Haiku 4.5 for bulk classification, Opus 5 for ask extraction).
+2. **Google OAuth (one time)** - in Google Cloud Console: create a project,
+   enable the Gmail API, configure the OAuth consent screen (External; add
+   yourself as a test user), create an OAuth client of type **Desktop app**,
+   and download the JSON to `credentials.json` in the repo root (gitignored).
+3. **Backfill** - `python -m app.gmail.sync --backfill` opens the consent
+   browser window, pulls 30 days of threads, guesses sender tiers, and
+   classifies service mail. Rerunnable; it only adds.
+4. **Serve** - `uvicorn app.main:app --port 8000`. The app polls
+   `history.list` every 60s for new mail.
+5. Review the sender guesses at `/senders` - that review is Phase 1's exit
+   criterion before any write path is built.
+
+## Layout
+
+```
+app/config.py      env, model map, scopes, lanes
+app/db.py          SQLite schema (SPEC section 8)
+app/llm.py         OpenRouter client (JSON calls, lenient parse, retry)
+app/rules.py       sender tiers, email types, extraction pipeline
+app/admission.py   section admission tests (SPEC 3.1)
+app/main.py        FastAPI: /api/today, /api/thread/{id}, /api/senders
+app/gmail/         OAuth, REST client, message parsing, backfill + poll
+app/static/        Today screen, reading pane, Senders page (warm paper)
+prompts/           editable prompt files (sender tier, email type, ask)
+scripts/seed_demo.py  fixture world from the mockups
+```
+
+Design tokens live in `:root` of `app/static/style.css` so a later
+DESIGN.md-based swap is a one-file change (SPEC 7).

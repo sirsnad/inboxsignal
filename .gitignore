@@ -1,0 +1,14 @@
+# secrets and local state - none of these ever belong in git
+.env
+credentials.json
+token.json
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/

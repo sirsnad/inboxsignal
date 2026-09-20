@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Inbox - Promotions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Instrument+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <div class="senders-wrap" style="max-width: 640px;">
+    <div style="display:flex;align-items:center;gap:12px">
+      <a href="/" aria-label="Back to Today" class="pill" style="width:44px;height:44px;border-radius:22px;display:flex;align-items:center;justify-content:center;text-decoration:none">←</a>
+      <div>
+        <div style="font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)">Weekly digest · <span id="day"></span></div>
+        <h1 style="font-family:var(--display);font-weight:500;font-size:32px;margin:0">Promotions</h1>
+      </div>
+    </div>
+
+    <div style="font-size:13px;color:var(--muted);line-height:1.5;padding:0 4px">
+      Everything marketing lands here and never surfaces on Today. Unsubscribe
+      uses the sender's List-Unsubscribe header (one-click POST per RFC 8058,
+      or an unsubscribe email) - never links inside the email body. Each
+      unsubscribe is held 12 seconds and undoable.
+    </div>
+
+    <div class="card-list" id="rows"></div>
+  </div>
+</div>
+<div class="toast hidden" id="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let toastTimer = null, countTimer = null;
+function toast(msg, actionId, seconds) {
+  const t = $("toast");
+  clearTimeout(toastTimer); clearInterval(countTimer);
+  if (!actionId) {
+    t.textContent = msg;
+    t.classList.remove("hidden");
+    toastTimer = setTimeout(() => t.classList.add("hidden"), 4000);
+    return;
+  }
+  let left = seconds || 12;
+  t.innerHTML = `<span>${esc(msg)}</span>
+    <button class="pill" style="border-color:#5e5a52;background:transparent;color:#fff" id="t-undo">
+      Undo · <span id="t-count">${left}</span>s</button>`;
+  t.classList.remove("hidden");
+  $("t-undo").addEventListener("click", async () => {
+    try {
+      const r = await fetch(`/api/actions/${actionId}/undo`, { method: "POST" });
+      if (!r.ok) throw new Error((await r.json()).detail || r.status);
+      t.classList.add("hidden");
+      clearInterval(countTimer);
+      toast("Undone.");
+      load();
+    } catch (e) { toast(String(e.message || e)); }
+  });
+  countTimer = setInterval(() => {
+    left -= 1;
+    const el = $("t-count");
+    if (el) el.textContent = left;
+    if (left <= 0) { clearInterval(countTimer); t.classList.add("hidden"); }
+  }, 1000);
+}
+
+async function load() {
+  const d = await (await fetch("/api/promotions")).json();
+  $("day").textContent = d.digest_day;
+  $("rows").innerHTML = d.senders.map((s) => {
+    const right = s.muted
+      ? `<span class="tier-badge">Muted</span>`
+      : s.has_unsub
+        ? `<button class="pill" data-unsub="${esc(s.address)}">Unsub</button>`
+        : `<span class="tier-badge">no header</span>`;
+    return `<div class="row">
+      <div class="grow">
+        <div class="row-name" style="font-size:14px">${esc(s.name)}</div>
+        <div class="evidence-line ${s.suggest && !s.muted ? "warn" : ""}">
+          ${s.week_count} this week${s.evidence ? ` · ${esc(s.evidence)}` : ""}${s.last_subject ? ` · latest: ${esc(s.last_subject.slice(0, 50))}` : ""}</div>
+      </div>${right}</div>`;
+  }).join("") || `<div class="row"><div class="evidence-line">No promo senders yet.</div></div>`;
+
+  $("rows").querySelectorAll("[data-unsub]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try {
+        const r = await fetch("/api/actions/unsubscribe", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: b.dataset.unsub }),
+        });
+        if (!r.ok) throw new Error((await r.json()).detail || r.status);
+        const res = await r.json();
+        if (res.open_url) window.open(res.open_url, "_blank", "noopener");
+        toast(res.description, res.action_id, res.undo_seconds);
+        load();
+      } catch (e) { toast(String(e.message || e)); }
+    }));
+}
+load();
+</script>
+</body>
+</html>
