@@ -89,6 +89,7 @@ def parse_message(msg: dict, my_address: str) -> dict:
         "body_text": body[:20000],
         "list_unsubscribe": _header(payload, "List-Unsubscribe"),
         "rfc822_message_id": _header(payload, "Message-ID"),
+        "list_unsubscribe_post": _header(payload, "List-Unsubscribe-Post"),
         "received_at": received.isoformat(),
         "opened_at": opened,
         "is_from_me": int(is_from_me),

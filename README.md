@@ -4,19 +4,23 @@ A personal view on top of Gmail that turns ~30 daily arrivals into a short
 briefing. Spec in `SPEC.md`, design mockups in `mockups/`, original build
 prompt in `PROMPT.md`.
 
-**Status: Phase 2 (actions).** On top of the Phase 1 read-only mirror:
-done/snooze with `Signal/` labels, reply and reply-all through Gmail with a
-starter draft in your voice and a 12-second hold before anything sends,
-Yes/No handling on Needs-you rows (the confirm link opens in a new tab -
-never fetched server-side), one-tap New-senders sorting, rule editing on the
-Senders screen, and an actions log ("What just happened in Gmail") where
-every entry is undoable for 12 seconds. The app never deletes, trashes, or
-archives, and never touches labels outside `Signal/`.
+**Status: Phase 3 (lanes, palette, phone) - all three build phases done.**
 
-Phase 2 adds the `gmail.modify` (labels only) and `gmail.send` scopes - if
-you have a Phase 1 `token.json`, delete it and rerun the backfill to
-re-consent. Phase 3 (lanes, digest parsers, unsubscribe, Cmd+K, phone) is
-next.
+- Phase 1: read-only mirror - OAuth, 30-day backfill, sender-rule guessing,
+  email-type classification, the Today screen and reading pane.
+- Phase 2: actions - done/snooze with `Signal/` labels, replies through
+  Gmail with a voice-matched starter and a 12-second hold, Yes/No on
+  Needs-you rows, New-senders sorting, rule edits, the undoable actions log.
+- Phase 3: lane digests with per-source parsers (Realtor.com, Zillow,
+  LinkedIn Jobs, RotoReels) and a Claude fallback extractor, deduped by
+  address; the lane screen with cadence/snooze; the Promotions weekly digest
+  with RFC 8058 one-click / mailto unsubscribe (held 12s, undoable, never a
+  body link); the Cmd+K palette and Y/N/G/R/D/S single keys; the phone
+  layout with bottom tabs.
+
+The app never deletes, trashes, or archives, and never touches labels
+outside `Signal/`. Scopes: readonly + modify (labels only) + send; a
+Phase 1 `token.json` needs deleting and one re-consent.
 
 ## Run the demo (no Gmail needed)
 

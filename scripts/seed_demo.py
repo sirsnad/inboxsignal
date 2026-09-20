@@ -45,7 +45,7 @@ _mid = 0
 
 def message(conn, thread_id, from_addr, from_name, subject, body, received,
             to=None, cc=None, email_type=None, extracted=None, opened=True,
-            from_me=False, snippet=None):
+            from_me=False, snippet=None, unsub="", unsub_post=""):
     global _mid
     _mid += 1
     mid = f"demo-m{_mid:04d}"
@@ -53,11 +53,12 @@ def message(conn, thread_id, from_addr, from_name, subject, body, received,
         """INSERT OR REPLACE INTO messages
            (gmail_message_id, thread_id, from_address, from_name, to_addresses,
             cc_addresses, subject, snippet, body_text, list_unsubscribe,
-            email_type, extracted_json, received_at, opened_at, is_from_me)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            list_unsubscribe_post, email_type, extracted_json, received_at,
+            opened_at, is_from_me)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (mid, thread_id, from_addr, from_name, json.dumps(to or [ME]),
-         json.dumps(cc or []), subject, snippet or body[:110], body, "",
-         email_type, json.dumps(extracted) if extracted else None,
+         json.dumps(cc or []), subject, snippet or body[:110], body, unsub,
+         unsub_post, email_type, json.dumps(extracted) if extracted else None,
          received, received if (opened and not from_me) else None, int(from_me)),
     )
     return mid
@@ -238,7 +239,10 @@ def main():
         thread(conn, "t-roto", "AL free agents", ago(hours=5), "digest@rotoreels.example")
         message(conn, "t-roto", "digest@rotoreels.example", "RotoReels",
                 "RotoReels: 3 confirmed AL free agents, Clarke Schmidt reported",
-                "Free agency digest.", ago(hours=5), email_type="digest")
+                "Three AL free agents confirmed ahead of the deadline\n"
+                "Clarke Schmidt reportedly drawing interest from four clubs\n"
+                "Expansion draft salary rules: what changes for keeper leagues",
+                ago(hours=5), email_type="digest")
 
         sender(conn, "jobs-noreply@linkedin.com", "LinkedIn Jobs", "feed", "lane:Jobs",
                {"messages": 22, "opened": 6,
@@ -246,24 +250,46 @@ def main():
         thread(conn, "t-li", "Jobs for you", ago(hours=7), "jobs-noreply@linkedin.com")
         message(conn, "t-li", "jobs-noreply@linkedin.com", "LinkedIn Jobs",
                 "1 strong fit: Figma, Strategic Partner Manager (80)",
-                "Job alerts.", ago(hours=7), email_type="digest")
+                "Strategic Partner Manager\nFigma · San Francisco, CA (Hybrid)\n\n"
+                "Head of Alliances\nVercel · Remote",
+                ago(hours=7), email_type="digest")
 
         sender(conn, "alerts@realtor.com", "Realtor.com", "feed", "lane:Homes",
                {"messages": 28, "opened": 1, "why": "opened 1 of 28 · 4 a day merged into 1"})
         sender(conn, "daily@zillow.com", "Zillow", "feed", "lane:Homes",
                {"messages": 14, "opened": 2, "why": "saved searches: La Jolla, Bay Ho, Baltimore"})
-        for i, (addr, subj) in enumerate([
-            ("alerts@realtor.com", "7 new homes in La Jolla"),
-            ("alerts@realtor.com", "20 price drops in La Jolla"),
-            ("alerts@realtor.com", "Open houses this weekend"),
-            ("alerts@realtor.com", "New rentals in La Jolla"),
-            ("daily@zillow.com", "New in Bay Ho: canyon view lot"),
-            ("daily@zillow.com", "1822 Belt St, Baltimore and 3 more"),
-        ]):
+        homes_mail = [
+            ("alerts@realtor.com", "Realtor.com", "7 new homes in La Jolla",
+             "New listing\n3288 Via Alicante, La Jolla\n$959,000\n2 bds · 2 ba · 1,137 sqft\n\n"
+             "New listing\n5527 Caminito Herminia, La Jolla\n$1,199,000\n3 bds · 2 ba · 1,542 sqft",
+             False),
+            ("alerts@realtor.com", "Realtor.com", "20 price drops in La Jolla",
+             "Price drop\n404 Bonair St, La Jolla\n$1,625,000 · was $1,685,000 · -$60,000\n"
+             "3 bds · 2 ba · 1,252 sqft\n\n"
+             "Price drop\n7344 Fay Ave, La Jolla\n$2,150,000 · reduced\n4 bds · 3 ba · 2,410 sqft",
+             False),
+            ("alerts@realtor.com", "Realtor.com", "Open houses this weekend in La Jolla",
+             "Open house Sat 1-4\n1230 Silverado St, La Jolla\n$1,395,000\n2 bds · 2 ba · 1,201 sqft",
+             False),
+            ("alerts@realtor.com", "Realtor.com", "New rentals in La Jolla",
+             "For rent\n909 Coast Blvd, La Jolla\n$4,200\n1 bds · 1 ba · 748 sqft",
+             False),
+            ("daily@zillow.com", "Zillow", "New in Bay Ho: canyon view lot",
+             "New listing\n4560 Mount Hubbard Ave, San Diego\n$1,050,000\n"
+             "3 bds · 2 ba · 1,344 sqft\nCanyon view lot, quiet street",
+             True),
+            ("daily@zillow.com", "Zillow", "1822 Belt St, Baltimore and 3 more",
+             "New listing\n1822 Belt St, Baltimore\n$550,000\n4 bds · 4 ba · 1,878 sqft\n\n"
+             "New listing\n3288 Via Alicante, La Jolla\n$959,000\n2 bds · 2 ba · 1,137 sqft",
+             False),
+        ]
+        for i, (addr, name, subj, body, opened) in enumerate(homes_mail):
             tid = f"t-homes{i}"
             thread(conn, tid, subj, ago(hours=4), addr)
-            message(conn, tid, addr, addr.split("@")[-1], subj, "Listings.",
-                    ago(hours=4), email_type="digest", opened=False)
+            message(conn, tid, addr, name, subj, body, ago(hours=4),
+                    email_type="digest", opened=opened,
+                    unsub=f"<https://{addr.split('@')[-1]}/unsub>",
+                    unsub_post="List-Unsubscribe=One-Click")
 
         sender(conn, "digest@claude.com", "Claude Code weekly", "feed", "lane:Reads",
                {"messages": 4, "opened": 4})
@@ -308,14 +334,21 @@ def main():
                {"messages": 6, "opened": 0, "why": "opened 0 of 6", "unsub_suggest": True}, confirmed=1)
         sender(conn, "style@bonobos.com", "Bonobos Offers", "promo", "promotions",
                {"messages": 9, "opened": 1}, confirmed=1)
-        promos = ["deals@fanatics.com", "offers@uber.com", "hello@marinelayer.com",
-                  "style@bonobos.com"]
+        promo_unsub = {
+            "deals@fanatics.com": ("<https://fanatics.example/oneclick>", "List-Unsubscribe=One-Click"),
+            "offers@uber.com": ("<mailto:unsubscribe@uber.example>", ""),
+            "hello@marinelayer.com": ("<https://marinelayer.example/prefs>", ""),
+            "style@bonobos.com": ("<https://bonobos.example/oneclick>", "List-Unsubscribe=One-Click"),
+        }
+        promos = list(promo_unsub)
         for i in range(19):
             addr = promos[i % len(promos)]
+            u, up = promo_unsub[addr]
             tid = f"t-promo{i}"
             thread(conn, tid, f"Sale {i}", ago(hours=2 + i % 8), addr)
             message(conn, tid, addr, addr.split("@")[0].title(), f"Big sale {i}",
-                    "Marketing.", ago(hours=2 + i % 8), email_type="offer", opened=False)
+                    "Marketing.", ago(hours=2 + i % 8), email_type="offer",
+                    opened=False, unsub=u, unsub_post=up)
 
         # ---- new senders (unconfirmed guesses, this week) ----
         for addr, name, tier, why in [
@@ -335,7 +368,12 @@ def main():
                     email_type="notice" if tier == "service" else "offer",
                     extracted={"email_type": "notice", "summary": ""}, opened=False)
 
-    print(f"Seeded demo db at {config.DB_PATH}")
+    # Build today's lane digests through the real parsers (no LLM needed
+    # for the fixture senders).
+    from app import digests
+    with db.session() as conn:
+        built = digests.build_today(conn)
+    print(f"Seeded demo db at {config.DB_PATH} ({built} lane digests built)")
 
 
 if __name__ == "__main__":

@@ -117,6 +117,19 @@ CREATE TABLE IF NOT EXISTS sync_state (
     value TEXT
 );
 
+-- Held operations other than sends (e.g. unsubscribe) waiting out their
+-- 12s undo window before touching the outside world.
+CREATE TABLE IF NOT EXISTS pending_ops (
+    id INTEGER PRIMARY KEY,
+    kind TEXT,
+    payload_json TEXT,
+    created_at TEXT,
+    run_at TEXT,
+    done_at TEXT,
+    canceled_at TEXT,
+    error TEXT
+);
+
 -- Replies waiting out the 12s undo hold (SPEC 4: hold the send; never rely
 -- on Gmail's own undo).
 CREATE TABLE IF NOT EXISTS pending_sends (
@@ -143,6 +156,7 @@ MIGRATIONS = [
     "ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT",
     "ALTER TABLE actions ADD COLUMN undo_json TEXT",
     "ALTER TABLE threads ADD COLUMN returned INTEGER DEFAULT 0",
+    "ALTER TABLE messages ADD COLUMN list_unsubscribe_post TEXT",
 ]
 
 

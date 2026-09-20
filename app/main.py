@@ -35,6 +35,7 @@ async def _actions_loop():
             def work(check_snoozes: bool):
                 with db.session() as conn:
                     actions.execute_due_sends(conn)
+                    actions.execute_due_ops(conn)
                     if check_snoozes:
                         actions.wake_snoozed(conn)
             await asyncio.to_thread(work, tick % 15 == 0)
@@ -311,6 +312,121 @@ def thread_send(thread_id: str, body: SendBody):
             raise HTTPException(400, str(e))
 
 
+# ---------- Phase 3: lanes, promotions, unsubscribe ----------
+
+class LaneSettings(BaseModel):
+    cadence: str | None = None          # daily | weekly
+    digest_time: str | None = None      # "07:00"
+    snooze_days: int | None = None
+    snooze_reason: str | None = None
+    unsnooze: bool = False
+
+
+class UnsubBody(BaseModel):
+    address: str
+
+
+@app.get("/api/lane/{name}")
+def api_lane(name: str):
+    from . import digests as dg
+    with db.session() as conn:
+        lane = conn.execute("SELECT * FROM lanes WHERE name = ?", (name,)).fetchone()
+        if not lane:
+            raise HTTPException(404)
+        sources = conn.execute(
+            """SELECT s.address, s.display_name FROM lane_sources ls
+               JOIN senders s ON s.address = ls.sender_address WHERE ls.lane_id = ?""",
+            (lane["id"],),
+        ).fetchall()
+        items = dg.today_digest(conn, lane["id"])
+        merged_from = conn.execute(
+            """SELECT COUNT(*) AS n FROM messages WHERE from_address IN
+               (SELECT sender_address FROM lane_sources WHERE lane_id = ?)
+               AND is_from_me = 0 AND received_at > datetime('now', '-1 day')""",
+            (lane["id"],),
+        ).fetchone()["n"]
+        lead = items[:6]
+        rest: dict[str, int] = {}
+        for i in items[6:]:
+            k = i.get("kind", "other")
+            rest[k] = rest.get(k, 0) + 1
+        return {
+            "name": lane["name"],
+            "cadence": lane["cadence"],
+            "digest_time": lane["digest_time"],
+            "snoozed_until": lane["snoozed_until"],
+            "snooze_reason": lane["snooze_reason"],
+            "sources": [s["display_name"] or s["address"] for s in sources],
+            "merged_from": merged_from,
+            "items": items,
+            "also": [
+                {"label": dg.KIND_LABEL.get(k, k), "count": n} for k, n in rest.items()
+            ],
+        }
+
+
+@app.post("/api/lane/{name}/settings")
+def api_lane_settings(name: str, body: LaneSettings):
+    with db.session() as conn:
+        lane = conn.execute("SELECT * FROM lanes WHERE name = ?", (name,)).fetchone()
+        if not lane:
+            raise HTTPException(404)
+        if body.cadence in ("daily", "weekly"):
+            conn.execute("UPDATE lanes SET cadence = ? WHERE id = ?",
+                         (body.cadence, lane["id"]))
+        if body.digest_time:
+            conn.execute("UPDATE lanes SET digest_time = ? WHERE id = ?",
+                         (body.digest_time, lane["id"]))
+        if body.unsnooze:
+            conn.execute("UPDATE lanes SET snoozed_until = NULL, snooze_reason = NULL "
+                         "WHERE id = ?", (lane["id"],))
+        elif body.snooze_days:
+            until = (datetime.now().astimezone() + timedelta(days=body.snooze_days)).isoformat()
+            conn.execute("UPDATE lanes SET snoozed_until = ?, snooze_reason = ? WHERE id = ?",
+                         (until, body.snooze_reason or "", lane["id"]))
+        return {"ok": True}
+
+
+@app.get("/api/promotions")
+def api_promotions():
+    with db.session() as conn:
+        rows = conn.execute(
+            """SELECT s.address, s.display_name, s.route, s.evidence_json,
+                      COUNT(m.gmail_message_id) AS week_count,
+                      MAX(m.received_at) AS last_at,
+                      MAX(m.subject) AS last_subject,
+                      MAX(CASE WHEN m.list_unsubscribe != '' THEN 1 ELSE 0 END) AS has_unsub
+               FROM senders s
+               LEFT JOIN messages m ON m.from_address = s.address
+                   AND m.is_from_me = 0 AND m.received_at > datetime('now', '-7 day')
+               WHERE s.tier = 'promo'
+               GROUP BY s.address ORDER BY week_count DESC"""
+        ).fetchall()
+        out = []
+        for r in rows:
+            ev = db.loads(r["evidence_json"], {})
+            out.append({
+                "address": r["address"],
+                "name": r["display_name"] or r["address"],
+                "week_count": r["week_count"],
+                "last_subject": r["last_subject"] or "",
+                "muted": r["route"] == "muted",
+                "suggest": bool(ev.get("unsub_suggest")),
+                "evidence": ev.get("why", ""),
+                "has_unsub": bool(r["has_unsub"]),
+            })
+        return {"senders": out, "digest_day": "Sunday"}
+
+
+@app.post("/api/actions/unsubscribe")
+def act_unsubscribe(body: UnsubBody):
+    with db.session() as conn:
+        try:
+            return actions.unsubscribe(conn, body.address)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
 @app.get("/api/log")
 def api_log():
     with db.session() as conn:
@@ -328,3 +444,13 @@ def index():
 @app.get("/senders")
 def senders_page():
     return FileResponse(STATIC / "senders.html")
+
+
+@app.get("/lane/{name}")
+def lane_page(name: str):
+    return FileResponse(STATIC / "lane.html")
+
+
+@app.get("/promotions")
+def promotions_page():
+    return FileResponse(STATIC / "promotions.html")

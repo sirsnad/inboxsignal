@@ -24,10 +24,10 @@ def upsert_message(conn, m: dict) -> None:
     conn.execute(
         """INSERT INTO messages (gmail_message_id, thread_id, from_address, from_name,
                to_addresses, cc_addresses, subject, snippet, body_text, list_unsubscribe,
-               rfc822_message_id, received_at, opened_at, is_from_me)
+               list_unsubscribe_post, rfc822_message_id, received_at, opened_at, is_from_me)
            VALUES (:gmail_message_id, :thread_id, :from_address, :from_name,
                :to_addresses, :cc_addresses, :subject, :snippet, :body_text, :list_unsubscribe,
-               :rfc822_message_id, :received_at, :opened_at, :is_from_me)
+               :list_unsubscribe_post, :rfc822_message_id, :received_at, :opened_at, :is_from_me)
            ON CONFLICT(gmail_message_id) DO UPDATE SET
                opened_at = COALESCE(messages.opened_at, excluded.opened_at),
                snippet = excluded.snippet""",

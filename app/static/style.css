@@ -208,6 +208,81 @@ button { font-family: inherit; cursor: pointer; }
 .evidence-line { font-size: 13px; color: var(--muted); }
 .evidence-line.warn { color: var(--terra); }
 
+kbd {
+  font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--muted);
+  background: var(--ground); border: 1px solid var(--line-mid); border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 5px; line-height: 1.4;
+}
+.pill.primary kbd { color: #fff; background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.3); }
+
+/* ---------- command palette ---------- */
+.palette-veil {
+  position: fixed; inset: 0; background: rgba(28,27,24,0.35); z-index: 60;
+}
+.palette {
+  position: fixed; left: 50%; top: 110px; transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px)); background: var(--card); border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(28,27,24,0.35); z-index: 61; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.palette .p-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.palette input {
+  flex-grow: 1; border: 0; outline: none; font-size: 15px; font-family: inherit;
+  color: var(--ink); background: transparent;
+}
+.palette .p-list { display: flex; flex-direction: column; padding: 6px; max-height: 320px; overflow-y: auto; }
+.palette .p-row {
+  display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 0 12px;
+  border-radius: 8px; border: 0; background: var(--card); text-align: left;
+  font-size: 14px; color: var(--ink); font-family: inherit; cursor: pointer;
+}
+.palette .p-row.top { background: var(--ground); }
+.palette .p-row .p-group {
+  font-size: 11px; font-weight: 600; color: var(--muted); width: 56px;
+  text-transform: uppercase; letter-spacing: 0.06em; flex-shrink: 0;
+}
+.palette .p-row .grow { text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+.palette .p-none { padding: 12px; font-size: 13px; color: var(--muted); }
+
+/* ---------- phone (mockups/Main.html) ---------- */
+.tabbar { display: none; }
+.pane-back { display: none; }
+@media (max-width: 860px) {
+  .sidebar, kbd { display: none; }
+  .layout { height: auto; overflow: visible; }
+  .center {
+    width: 100%; border-right: 0; padding: 24px 16px 100px 16px; overflow: visible;
+  }
+  .masthead .stats { flex-wrap: wrap; gap: 10px; }
+  .cols { flex-direction: column; }
+  .pane {
+    position: fixed; inset: 0; z-index: 40; display: none;
+    padding: 20px 16px 100px 16px;
+  }
+  .pane.open { display: flex; }
+  .pane-back {
+    display: inline-flex; align-self: flex-start; align-items: center; gap: 6px;
+    height: 36px; padding: 0 14px; border-radius: 18px;
+    border: 1px solid var(--line-mid); background: var(--card); font-size: 13px;
+    font-weight: 500; color: var(--ink);
+  }
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 76px; z-index: 45;
+    background: var(--card); border-top: 1px solid var(--line);
+    display: flex; justify-content: space-around; align-items: flex-start;
+    padding: 10px 8px 0 8px;
+  }
+  .tabbar a {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    width: 72px; color: var(--muted); font-size: 11px; font-weight: 500;
+  }
+  .tabbar a.active { color: var(--green); font-weight: 600; }
+  .palette { top: 60px; }
+}
+
 .toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   background: var(--ink); color: #fff; border-radius: 12px; padding: 12px 16px;

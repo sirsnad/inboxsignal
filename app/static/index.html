@@ -15,6 +15,9 @@
       <div class="name">Signal</div>
       <div class="account" id="account"></div>
     </div>
+    <button class="pill" id="palette-open" style="display:flex;align-items:center;gap:8px;height:40px;border-radius:10px;text-align:left;color:var(--muted);font-size:13px">
+      <span>⌕</span><span class="grow" style="flex-grow:1">Jump or act</span><kbd>⌘K</kbd>
+    </button>
     <nav class="nav">
       <a href="/" class="active"><div>Today</div><div class="badge" id="nav-open"></div></a>
       <a href="#waiting"><div>Waiting on them</div><div class="badge" id="nav-waiting"></div></a>
@@ -33,6 +36,14 @@
       <div class="big" id="foot-line"></div>
       <div class="meter"><div id="foot-meter" style="width: 0%"></div></div>
       <div id="foot-sub"></div>
+    </div>
+    <div class="foot" style="margin-top:0">
+      <div class="big">Keys</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:var(--muted)">
+        <div><kbd>Y</kbd> yes</div><div><kbd>N</kbd> no</div><div><kbd>R</kbd> reply</div>
+        <div><kbd>D</kbd> done</div><div><kbd>G</kbd> Google ok</div><div><kbd>S</kbd> snooze</div>
+        <div><kbd>Esc</kbd> close</div>
+      </div>
     </div>
   </aside>
 
@@ -97,7 +108,7 @@
       <div class="card-list pad-list" id="money-list"></div>
     </section>
 
-    <section class="section">
+    <section class="section" id="lanes-anchor">
       <div class="section-head">
         <div class="title">Lanes</div>
         <div class="hint">counts, never badges</div>
@@ -116,6 +127,26 @@
   </section>
 
 </div>
+
+<nav class="tabbar">
+  <a href="/" class="active"><span>◷</span><span>Today</span></a>
+  <a href="#lanes-anchor"><span>≡</span><span>Lanes</span></a>
+  <a href="/senders"><span>◉</span><span>Senders</span></a>
+  <a href="https://mail.google.com" target="_blank" rel="noopener"><span>▤</span><span>Gmail</span></a>
+</nav>
+
+<div class="hidden" id="palette-wrap">
+  <div class="palette-veil" id="palette-veil"></div>
+  <div class="palette" role="dialog" aria-label="Command palette">
+    <div class="p-head">
+      <span style="color:var(--muted)">⌕</span>
+      <input id="palette-input" placeholder="Type an action, a person, a lane, or search Gmail" autocomplete="off">
+      <kbd>Esc</kbd>
+    </div>
+    <div class="p-list" id="palette-list"></div>
+  </div>
+</div>
+
 <div class="toast hidden" id="toast"></div>
 <script src="/static/app.js"></script>
 </body>

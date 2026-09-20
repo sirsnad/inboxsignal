@@ -25,6 +25,41 @@ async function post(url, body) {
 // mode: empty | read | compose | sent
 const pane = { mode: "empty", thread: null, draft: "", replyAll: false,
                composeMode: "reply", sent: null };
+let lastData = null;
+
+/* ---------- shared action helpers (buttons, keys, palette) ---------- */
+async function doConfirm(row, answer) {
+  const res = await post("/api/actions/confirm",
+    { message_id: row.message_id, answer });
+  if (res.open_url) window.open(res.open_url, "_blank", "noopener");
+  showToast(res.description.split(".")[0] + ".", res.action_id, res.undo_seconds);
+  refresh();
+}
+
+async function doDone(threadId, name) {
+  const res = await post("/api/actions/done", { thread_id: threadId });
+  if (pane.thread && pane.thread.thread_id === threadId) closePane();
+  showToast(`${name || "Thread"} marked done. Nothing sent.`,
+            res.action_id, res.undo_seconds);
+  refresh();
+}
+
+async function doSnooze(threadId, preset) {
+  const res = await post("/api/actions/snooze", { thread_id: threadId, preset });
+  if (pane.thread && pane.thread.thread_id === threadId) closePane();
+  showToast(res.description.split(".")[0] + ".", res.action_id, res.undo_seconds);
+  refresh();
+}
+
+function closePane() {
+  pane.mode = "empty";
+  $("pane").classList.remove("open");
+  renderPane();
+}
+
+function firstPerson() {
+  return (lastData?.people || []).find((p) => !p.following) || null;
+}
 
 /* ---------- undo toast ---------- */
 let toastTimer = null, countTimer = null;
@@ -64,6 +99,7 @@ function showToast(msg, actionId, seconds, onUndo) {
 /* ---------- data load ---------- */
 async function refresh() {
   const data = await (await fetch("/api/today")).json();
+  lastData = data;
   render(data);
   if (pane.mode === "empty") renderEmptyPane();
 }
@@ -142,9 +178,9 @@ function renderNeeds(items, recentDone) {
       const row = document.createElement("div");
       row.className = "row selectable";
       const buttons = n.answer_mode === "yesno"
-        ? `<button class="pill primary" data-a="yes">Yes, me</button>
-           <button class="pill" data-a="no">No</button>`
-        : `<button class="pill" data-a="ack">That was me</button>`;
+        ? `<button class="pill primary" data-a="yes">Yes, me <kbd>Y</kbd></button>
+           <button class="pill" data-a="no">No <kbd>N</kbd></button>`
+        : `<button class="pill" data-a="ack">That was me <kbd>G</kbd></button>`;
       row.innerHTML = `
         <div class="grow">
           <div class="row-name" style="font-size:14px">${esc(n.title)}</div>
@@ -155,13 +191,8 @@ function renderNeeds(items, recentDone) {
       row.querySelectorAll("[data-a]").forEach((b) =>
         b.addEventListener("click", async (e) => {
           e.stopPropagation();
-          try {
-            const res = await post("/api/actions/confirm",
-              { message_id: n.message_id, answer: b.dataset.a });
-            if (res.open_url) window.open(res.open_url, "_blank", "noopener");
-            showToast(res.description.split(".")[0] + ".", res.action_id, res.undo_seconds);
-            refresh();
-          } catch (err) { showToast(err.message); }
+          try { await doConfirm(n, b.dataset.a); }
+          catch (err) { showToast(err.message); }
         }));
       row.addEventListener("click", () => openThread(row, n.thread_id));
       list.appendChild(row);
@@ -266,21 +297,25 @@ function renderLanes(lanes) {
       const body = l.no_count
         ? `<div class="lane-titles">${l.titles.map(esc).join("<br>") || "<span class='lane-sum'>quiet</span>"}</div>`
         : `<div class="lane-sum">${esc(l.summary) || "quiet today"}</div>`;
-      return `<div class="lane-tile"><div class="lane-name"><span>${esc(l.name)}</span>${count}</div>${body}</div>`;
+      return `<a class="lane-tile" href="/lane/${encodeURIComponent(l.name)}" style="color:var(--ink)">
+        <div class="lane-name"><span>${esc(l.name)}</span>${count}</div>${body}</a>`;
     })
     .join("");
   $("nav-lanes").innerHTML = lanes
-    .map((l) => `<a href="#lane-${esc(l.name)}"><div>${esc(l.name)}</div>
+    .map((l) => `<a href="/lane/${encodeURIComponent(l.name)}"><div>${esc(l.name)}</div>
        <div class="badge">${l.no_count || l.count == null ? "" : l.count || ""}</div></a>`)
     .join("");
 }
 
 function renderPromos(p) {
-  $("promo-line").innerHTML = `
+  const line = $("promo-line");
+  line.style.cursor = "pointer";
+  line.innerHTML = `
     <div class="grow">
       <b>Promotions · ${p.count_today} filed today</b>
       <div class="sub">${esc(p.digest_day)} digest${p.unsub.length ? ` · ${p.unsub.map(esc).join(", ")} up for unsubscribe` : ""}</div>
     </div><div>›</div>`;
+  line.onclick = () => { location.href = "/promotions"; };
   $("nav-promos").textContent = `${p.count_today} · ${p.digest_day.slice(0, 3)}`;
 }
 
@@ -293,7 +328,17 @@ async function openThread(el, threadId) {
   if (!r.ok) return;
   pane.thread = await r.json();
   pane.mode = "read";
+  $("pane").classList.add("open");   // full-screen on phone; no-op on desktop
   renderPane();
+}
+
+function decoratePane() {
+  const box = $("pane");
+  box.insertAdjacentHTML(
+    "afterbegin",
+    `<button class="pane-back" id="pane-back">← Today</button>`
+  );
+  $("pane-back").addEventListener("click", closePane);
 }
 
 function item(ico, html, color) {
@@ -319,11 +364,11 @@ function renderPane() {
   const actionsHtml = t.can_reply && t.tier === "person" ? `
     <div style="display:flex;gap:8px;padding-top:4px">
       <button class="pill primary" style="height:38px;border-radius:19px" id="p-reply">
-        Reply to ${esc(t.first_name)} only</button>
-      <button class="pill" style="height:38px;border-radius:19px" id="p-done">Mine's fine, done</button>
+        Reply to ${esc(t.first_name)} only <kbd>R</kbd></button>
+      <button class="pill" style="height:38px;border-radius:19px" id="p-done">Mine's fine, done <kbd>D</kbd></button>
     </div>` : `
     <div style="display:flex;gap:8px;padding-top:4px">
-      <button class="pill" style="height:38px;border-radius:19px" id="p-done">Done</button>
+      <button class="pill" style="height:38px;border-radius:19px" id="p-done">Done <kbd>D</kbd></button>
     </div>`;
   box.innerHTML = `
     <div>
@@ -345,37 +390,31 @@ function renderPane() {
     <div class="msg-body">${esc(t.body)}</div>
     <div class="footer" style="display:flex;justify-content:space-between;align-items:center">
       <span>${esc(t.footer)}</span>
-      <span id="snooze-zone"><button class="pill" id="p-snooze">Snooze</button></span>
+      <span id="snooze-zone"><button class="pill" id="p-snooze">Snooze <kbd>S</kbd></button></span>
     </div>`;
+  decoratePane();
 
   const reply = $("p-reply");
   if (reply) reply.addEventListener("click", () => startCompose(t.thread_id, "reply"));
   $("p-done").addEventListener("click", async () => {
-    try {
-      const res = await post("/api/actions/done", { thread_id: t.thread_id });
-      pane.mode = "empty";
-      renderPane();
-      showToast(`${t.sender_name}'s thread marked done. Nothing sent.`,
-                res.action_id, res.undo_seconds);
-      refresh();
-    } catch (err) { showToast(err.message); }
+    try { await doDone(t.thread_id, `${t.sender_name}'s thread`); }
+    catch (err) { showToast(err.message); }
   });
-  $("p-snooze").addEventListener("click", () => {
-    $("snooze-zone").innerHTML = ["tomorrow", "monday", "week"]
-      .map((p) => `<button class="pill" data-s="${p}" style="margin-left:6px">${cap(p)}</button>`)
-      .join("");
-    $("snooze-zone").querySelectorAll("[data-s]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        try {
-          const res = await post("/api/actions/snooze",
-            { thread_id: t.thread_id, preset: b.dataset.s });
-          pane.mode = "empty";
-          renderPane();
-          showToast(res.description.split(".")[0] + ".", res.action_id, res.undo_seconds);
-          refresh();
-        } catch (err) { showToast(err.message); }
-      }));
-  });
+  $("p-snooze").addEventListener("click", showSnoozeOptions);
+}
+
+function showSnoozeOptions() {
+  const t = pane.thread;
+  const zone = $("snooze-zone");
+  if (!t || !zone) return;
+  zone.innerHTML = ["tomorrow", "monday", "week"]
+    .map((p) => `<button class="pill" data-s="${p}" style="margin-left:6px">${cap(p)}</button>`)
+    .join("");
+  zone.querySelectorAll("[data-s]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try { await doSnooze(t.thread_id, b.dataset.s); }
+      catch (err) { showToast(err.message); }
+    }));
 }
 
 async function startCompose(threadId, mode) {
@@ -432,6 +471,13 @@ function renderCompose(box, t) {
     <div style="font-size:13px;line-height:1.5;color:var(--muted);border-left:2px solid var(--line);padding-left:12px">
       ${esc((t.body || "").slice(0, 400))}
     </div>`;
+  decoratePane();
+  $("c-body").addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      $("c-send").click();
+    }
+  });
   const toggle = $("c-toggle");
   if (toggle) toggle.addEventListener("click", () => {
     pane.draft = $("c-body").value;
@@ -474,6 +520,7 @@ function renderSent(box, t) {
       </div>
     </div>
     <div class="footer">When they reply, this thread comes back to People with the reply on top.</div>`;
+  decoratePane();
   const timer = setInterval(() => {
     left -= 1;
     const a = $("s-count"), b = $("s-count2");
@@ -517,6 +564,137 @@ async function renderEmptyPane() {
       <div>Pick a People or Needs you item to read it here.</div>
     </div>`;
 }
+
+/* ---------- command palette (SPEC 5) ---------- */
+
+function buildCommands(query) {
+  const d = lastData || {};
+  const cmds = [];
+  for (const n of d.needs_you || []) {
+    const svc = n.title.split(":")[0];
+    if (n.answer_mode === "yesno") {
+      cmds.push({ group: "act", key: "Y", label: `${svc}: yes, that was me`,
+                  run: () => doConfirm(n, "yes") });
+      cmds.push({ group: "act", key: "N", label: `${svc}: no, not me`,
+                  run: () => doConfirm(n, "no") });
+    } else {
+      cmds.push({ group: "act", key: "G", label: `${svc}: that was me`,
+                  run: () => doConfirm(n, "ack") });
+    }
+  }
+  const p = firstPerson();
+  if (p) {
+    cmds.push({ group: "act", key: "R", label: `Reply to ${p.name}`,
+                run: () => startCompose(p.thread_id, "reply") });
+    cmds.push({ group: "act", key: "D", label: `${p.name}'s thread: done`,
+                run: () => doDone(p.thread_id, `${p.name}'s thread`) });
+    cmds.push({ group: "snooze", key: "S",
+                label: `Snooze ${p.name}'s thread until Monday 8am`,
+                run: () => doSnooze(p.thread_id, "monday") });
+  }
+  for (const l of d.lanes || []) {
+    cmds.push({ group: "go", key: "→", label: `${l.name} lane`,
+                run: () => { location.href = `/lane/${encodeURIComponent(l.name)}`; } });
+  }
+  cmds.push({ group: "go", key: "→", label: "Senders and rules",
+              run: () => { location.href = "/senders"; } });
+  cmds.push({ group: "go", key: "→", label: "Promotions digest",
+              run: () => { location.href = "/promotions"; } });
+  const q = (query || "").toLowerCase().trim();
+  let out = cmds.filter((c) => !q || (c.label + " " + c.group).toLowerCase().includes(q));
+  if (q) {
+    out.push({ group: "gmail", key: "↵", label: `Search Gmail for "${query.trim()}"`,
+               run: () => window.open(
+                 `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(query.trim())}`,
+                 "_blank", "noopener") });
+  }
+  return out;
+}
+
+function paletteOpen() { return !$("palette-wrap").classList.contains("hidden"); }
+
+function renderPalette() {
+  const cmds = buildCommands($("palette-input").value);
+  $("palette-list").innerHTML = cmds.length
+    ? cmds.slice(0, 9).map((c, i) => `
+        <button class="p-row ${i === 0 ? "top" : ""}" data-i="${i}">
+          <span class="p-group">${esc(c.group)}</span>
+          <span class="grow">${esc(c.label)}</span>
+          <kbd>${esc(c.key)}</kbd>
+        </button>`).join("")
+    : `<div class="p-none">Nothing here for that.</div>`;
+  $("palette-list").querySelectorAll(".p-row").forEach((b) =>
+    b.addEventListener("click", async () => {
+      togglePalette(false);
+      try { await cmds[Number(b.dataset.i)].run(); }
+      catch (e) { showToast(e.message); }
+    }));
+  renderPalette._cmds = cmds;
+}
+
+function togglePalette(show) {
+  const wrap = $("palette-wrap");
+  const on = show ?? wrap.classList.contains("hidden");
+  wrap.classList.toggle("hidden", !on);
+  if (on) {
+    $("palette-input").value = "";
+    renderPalette();
+    $("palette-input").focus();
+  }
+}
+
+$("palette-open").addEventListener("click", () => togglePalette(true));
+$("palette-veil").addEventListener("click", () => togglePalette(false));
+$("palette-input").addEventListener("input", renderPalette);
+$("palette-input").addEventListener("keydown", async (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const top = (renderPalette._cmds || [])[0];
+    togglePalette(false);
+    if (top) {
+      try { await top.run(); } catch (err) { showToast(err.message); }
+    }
+  }
+});
+
+/* ---------- single keys (SPEC 5) ---------- */
+
+document.addEventListener("keydown", async (e) => {
+  const k = (e.key || "").toLowerCase();
+  if ((e.metaKey || e.ctrlKey) && k === "k") {
+    e.preventDefault();
+    togglePalette();
+    return;
+  }
+  if (k === "escape") {
+    if (paletteOpen()) togglePalette(false);
+    else if (pane.mode === "compose") { pane.mode = "read"; renderPane(); }
+    else if (window.innerWidth <= 860 && pane.mode !== "empty") closePane();
+    return;
+  }
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || paletteOpen()) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const d = lastData || {};
+  const needs = d.needs_you || [];
+  const yesno = needs.find((n) => n.answer_mode === "yesno");
+  const ack = needs.find((n) => n.answer_mode === "ack");
+  const p = firstPerson();
+  const current = pane.mode === "read" && pane.thread ? pane.thread.thread_id : null;
+  try {
+    if (k === "y" && yesno) await doConfirm(yesno, "yes");
+    else if (k === "n" && yesno) await doConfirm(yesno, "no");
+    else if (k === "g" && ack) await doConfirm(ack, "ack");
+    else if (k === "r" && (current || p)) startCompose(current || p.thread_id, "reply");
+    else if (k === "d" && (current || p)) {
+      await doDone(current || p.thread_id,
+                   current ? `${pane.thread.sender_name}'s thread` : `${p.name}'s thread`);
+    } else if (k === "s") {
+      if (pane.mode === "read") showSnoozeOptions();
+      else if (p) await doSnooze(p.thread_id, "monday");
+    }
+  } catch (err) { showToast(err.message); }
+});
 
 refresh();
 setInterval(() => { if (pane.mode === "empty" || pane.mode === "read") refresh(); }, 60000);

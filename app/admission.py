@@ -307,13 +307,25 @@ def lanes(conn) -> list[dict]:
             continue
         no_count = name in config.NO_COUNT_LANES
         summary = today_rows[0]["subject"] if today_rows else ""
+        count = len(today_rows)
+        # Prefer the built digest: merged, deduped, counted by kind (SPEC 3.2).
+        from . import digests as digests_mod
+        snoozed = bool(lane["snoozed_until"] and lane["snoozed_until"] > _now().isoformat())
+        items = [] if snoozed else digests_mod.today_digest(conn, lane["id"])
+        if items:
+            count = len(items)
+            summary = digests_mod.summary_line(items)
+        if snoozed:
+            summary = f"snoozed{' · ' + lane['snooze_reason'] if lane['snooze_reason'] else ''}"
+            count = 0
         titles = [r["subject"] for r in today_rows[:3]] if no_count else []
         out.append({
             "name": name,
-            "count": None if no_count else len(today_rows),
+            "count": None if no_count else count,
             "summary": summary,
             "titles": titles,
             "no_count": no_count,
+            "snoozed": snoozed,
         })
     return out
 

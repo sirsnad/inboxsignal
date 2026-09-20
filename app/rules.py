@@ -311,9 +311,12 @@ def extract_asks(conn) -> None:
 
 
 def run_pipeline(conn) -> None:
+    from . import digests
     classify_senders(conn)
     conn.commit()
     classify_message_types(conn)
     conn.commit()
     extract_asks(conn)
+    conn.commit()
+    digests.build_today(conn)
     conn.commit()

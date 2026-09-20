@@ -386,6 +386,137 @@ def execute_due_sends(conn) -> int:
     return sent
 
 
+# ---------- unsubscribe (Phase 3, SPEC 4) ----------
+
+UNSUB_URL_RE = re.compile(r"<(https?://[^>]+)>")
+UNSUB_MAILTO_RE = re.compile(r"<mailto:([^>?]+)(\?[^>]*)?>")
+
+
+def parse_list_unsubscribe(header: str, post_header: str) -> dict:
+    """RFC 2369 header targets. One-click POST only when RFC 8058's
+    List-Unsubscribe-Post: List-Unsubscribe=One-Click is present."""
+    url = UNSUB_URL_RE.search(header or "")
+    mailto = UNSUB_MAILTO_RE.search(header or "")
+    one_click = bool(url) and "one-click" in (post_header or "").lower()
+    return {
+        "url": url.group(1) if url else None,
+        "mailto": mailto.group(1) if mailto else None,
+        "mailto_subject": (mailto.group(2) or "").replace("?subject=", "") if mailto else "",
+        "one_click": one_click,
+    }
+
+
+def unsubscribe(conn, address: str) -> dict:
+    """Uses the List-Unsubscribe header only - never links in the body."""
+    s = conn.execute("SELECT * FROM senders WHERE address = ?", (address,)).fetchone()
+    if not s:
+        raise ValueError("unknown sender")
+    m = conn.execute(
+        """SELECT list_unsubscribe, list_unsubscribe_post FROM messages
+           WHERE from_address = ? AND list_unsubscribe != ''
+           ORDER BY received_at DESC LIMIT 1""",
+        (address,),
+    ).fetchone()
+    target = parse_list_unsubscribe(
+        m["list_unsubscribe"] if m else "", m["list_unsubscribe_post"] if m else ""
+    )
+    if target["one_click"]:
+        method, how = "one_click", "one-click POST (RFC 8058)"
+    elif target["mailto"]:
+        method, how = "mailto", f"an unsubscribe email to {target['mailto']}"
+    elif target["url"]:
+        # A bare URL without the RFC 8058 header is a page for a human.
+        method, how = "open", "their unsubscribe page, opened in a new tab"
+    else:
+        raise ValueError(
+            "This sender has no List-Unsubscribe header, and the app never "
+            "clicks unsubscribe links inside email bodies."
+        )
+
+    prev = {"tier": s["tier"], "route": s["route"], "confirmed": s["confirmed_by_user"],
+            "subrules": {}}
+    conn.execute(
+        "UPDATE senders SET tier = 'promo', route = 'muted', confirmed_by_user = 1 "
+        "WHERE address = ?",
+        (address,),
+    )
+    name = s["display_name"] or address
+    undo_steps = [{"op": "restore_sender", "address": address, "prev": prev}]
+    op_id = None
+    result_url = None
+    if method in ("one_click", "mailto"):
+        now = datetime.now(timezone.utc)
+        cur = conn.execute(
+            "INSERT INTO pending_ops (kind, payload_json, created_at, run_at) "
+            "VALUES ('unsubscribe', ?, ?, ?)",
+            (json.dumps({"address": address, **target, "method": method}),
+             now.isoformat(),
+             (now + timedelta(seconds=config.UNDO_SECONDS)).isoformat()),
+        )
+        op_id = cur.lastrowid
+        undo_steps.insert(0, {"op": "cancel_op", "op_id": op_id})
+        effect = (f"Held {config.UNDO_SECONDS}s, then {how}. "
+                  "Future mail from them files to Promotions, muted.")
+    else:
+        result_url = target["url"]
+        effect = f"{how.capitalize()}. Future mail files to Promotions, muted."
+    res = _log(
+        conn, "unsubscribe", address,
+        f"Unsubscribing from {name} via {how}. They drop to Promotions, muted.",
+        effect, undo_steps,
+    )
+    res["open_url"] = result_url
+    return res
+
+
+def execute_due_ops(conn) -> int:
+    due = conn.execute(
+        "SELECT * FROM pending_ops WHERE done_at IS NULL AND canceled_at IS NULL "
+        "AND run_at <= ?",
+        (datetime.now(timezone.utc).isoformat(),),
+    ).fetchall()
+    ran = 0
+    for op in due:
+        payload = db.loads(op["payload_json"], {})
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            demo = config.DEMO or not config.TOKEN_PATH.exists()
+            if op["kind"] == "unsubscribe":
+                if payload.get("method") == "one_click" and not config.DEMO:
+                    import httpx
+                    r = httpx.post(payload["url"],
+                                   content="List-Unsubscribe=One-Click",
+                                   headers={"Content-Type": "application/x-www-form-urlencoded"},
+                                   timeout=15, follow_redirects=True)
+                    r.raise_for_status()
+                elif payload.get("method") == "mailto" and not demo:
+                    client = _client()
+                    my = db.get_state(conn, "my_address") or ""
+                    msg = EmailMessage()
+                    msg["From"] = my
+                    msg["To"] = payload["mailto"]
+                    msg["Subject"] = payload.get("mailto_subject") or "unsubscribe"
+                    msg.set_content("unsubscribe")
+                    client.send_message(msg.as_bytes())
+            conn.execute("UPDATE pending_ops SET done_at = ? WHERE id = ?",
+                         (now, op["id"]))
+            ran += 1
+        except Exception as e:
+            log.error("op %s failed: %s", op["id"], e)
+            conn.execute("UPDATE pending_ops SET error = ?, done_at = ? WHERE id = ?",
+                         (str(e), now, op["id"]))
+    return ran
+
+
+def cancel_op(conn, op_id: int) -> bool:
+    cur = conn.execute(
+        "UPDATE pending_ops SET canceled_at = ? WHERE id = ? AND done_at IS NULL "
+        "AND canceled_at IS NULL",
+        (datetime.now(timezone.utc).isoformat(), op_id),
+    )
+    return cur.rowcount > 0
+
+
 # ---------- undo ----------
 
 def undo(conn, action_id: int) -> dict:
@@ -430,6 +561,9 @@ def undo(conn, action_id: int) -> dict:
         elif op == "cancel_send":
             if not cancel_send(conn, step["send_id"]):
                 raise ValueError("too late - the reply already went out")
+        elif op == "cancel_op":
+            if not cancel_op(conn, step["op_id"]):
+                raise ValueError("too late - it already went through")
     conn.execute("UPDATE actions SET undone_at = ? WHERE id = ?",
                  (datetime.now(timezone.utc).isoformat(), action_id))
     return {"ok": True}
