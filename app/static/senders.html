@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Inbox - Senders</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Instrument+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <div class="senders-wrap">
+    <div>
+      <div class="masthead">
+        <div>
+          <div class="kicker">Rules, one per sender</div>
+          <h1 style="font-family: var(--display); font-weight: 500; font-size: 36px; margin: 0;">Senders</h1>
+        </div>
+        <a href="/">← Today</a>
+      </div>
+    </div>
+    <input class="search" id="search" type="search" placeholder="katz, chase, rotoreels" aria-label="Find a sender">
+    <div class="filter-chips" id="chips"></div>
+    <div class="card-list" id="rows"></div>
+    <div style="padding: 0 4px; color: var(--muted); font-size: 13px; line-height: 1.5;">
+      A sender is guessed from its domain and first email, then confirmed by what
+      you do. Reply once: it's a Person. Open it most days: it stays a Feed.
+      Ignore it 30 days: it drops to Promotions. Mail you send yourself is
+      Notebook unless a script sends it, then it's a Bot and shown as numbers.
+      Nothing leaves Gmail. Editing rules arrives in Phase 2; this page is the
+      review of the guesses.
+    </div>
+  </div>
+</div>
+<div class="toast hidden" id="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let all = [], filter = "all", query = "";
+
+const TIER_LABEL = { person: "Person", service: "Service", feed: "Feed",
+  promo: "Promo", bot: "Bot", notes: "Notes", split: "Split" };
+
+async function load() {
+  const data = await (await fetch("/api/senders")).json();
+  all = data.senders;
+  renderChips(data.counts);
+  render();
+}
+
+function renderChips(counts) {
+  const total = all.length;
+  const PLURAL = { person: "People", service: "Services", feed: "Feeds",
+    promo: "Promos", split: "Splits", notes: "You", bot: "Bots" };
+  const order = ["person", "service", "feed", "promo", "split", "notes", "bot"];
+  let html = `<button data-f="all" class="${filter === "all" ? "active" : ""}">All · ${total}</button>`;
+  for (const t of order) {
+    if (!counts[t]) continue;
+    html += `<button data-f="${t}" class="${filter === t ? "active" : ""}">${PLURAL[t]} · ${counts[t]}</button>`;
+  }
+  $("chips").innerHTML = html;
+  $("chips").querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => { filter = b.dataset.f; renderChips(counts); render(); }));
+}
+
+function initials(name) {
+  const p = (name || "?").split(/\s+/).filter(Boolean);
+  return ((p[0]?.[0] || "?") + (p.length > 1 ? p[p.length - 1][0] : "")).toUpperCase();
+}
+
+function render() {
+  const rows = all.filter((s) =>
+    (filter === "all" || s.tier === filter) &&
+    (!query || (s.name + " " + s.address).toLowerCase().includes(query)));
+  $("rows").innerHTML = rows.slice(0, 200).map((s) => {
+    const person = s.tier === "person";
+    const avatar = person
+      ? `<div class="avatar">${esc(initials(s.name))}</div>`
+      : `<div class="avatar hollow" style="background: var(--rail); border: 0;">${esc(initials(s.name))}</div>`;
+    const badge = s.unsub_suggest
+      ? `<button class="pill" onclick="phase2(event)">Unsub</button>`
+      : `<span class="tier-badge ${person ? "person" : ""}">${esc(TIER_LABEL[s.tier] || "?")}</span>`;
+    return `<div class="row">
+      ${avatar}
+      <div class="grow">
+        <div class="row-name" style="font-size:14px">${esc(s.name)}${s.domain ? ` · <span style="font-weight:400;color:var(--muted)">${esc(s.domain)}</span>` : ""}</div>
+        <div class="evidence-line ${s.unsub_suggest ? "warn" : ""}">${esc(TIER_LABEL[s.tier] || "unsorted")}${s.route && s.tier !== "split" ? ` · ${esc(s.route)}` : ""}${s.evidence ? ` · ${esc(s.evidence)}` : ""}</div>
+      </div>
+      ${badge}
+    </div>`;
+  }).join("") || `<div class="row"><div class="evidence-line">No senders match.</div></div>`;
+}
+
+function phase2(e) {
+  e.preventDefault();
+  const t = $("toast");
+  t.textContent = "Phase 1 is a read-only mirror. Actions arrive in Phase 2.";
+  t.classList.remove("hidden");
+  setTimeout(() => t.classList.add("hidden"), 3500);
+}
+
+$("search").addEventListener("input", (e) => { query = e.target.value.toLowerCase().trim(); render(); });
+load();
+</script>
+</body>
+</html>

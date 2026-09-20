@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Inbox</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="name">Signal</div>
+      <div class="account" id="account"></div>
+    </div>
+    <nav class="nav">
+      <a href="/" class="active"><div>Today</div><div class="badge" id="nav-open"></div></a>
+      <a href="#waiting"><div>Waiting on them</div><div class="badge" id="nav-waiting"></div></a>
+      <a href="/senders"><div>Senders</div><div class="badge" id="nav-senders"></div></a>
+    </nav>
+    <div>
+      <div class="nav-label">Lanes</div>
+      <nav class="nav lanes" id="nav-lanes"></nav>
+    </div>
+    <nav class="nav">
+      <a href="#promos" style="color: var(--muted);"><div>Promotions</div><div class="badge" id="nav-promos"></div></a>
+      <a href="#money" style="color: var(--muted);"><div>Money ledger</div><div class="badge"></div></a>
+      <a href="https://mail.google.com" target="_blank" rel="noopener" style="color: var(--muted);"><div>Open in Gmail</div><div class="badge">↗</div></a>
+    </nav>
+    <div class="foot">
+      <div class="big" id="foot-line"></div>
+      <div class="meter"><div id="foot-meter" style="width: 0%"></div></div>
+      <div id="foot-sub"></div>
+    </div>
+  </aside>
+
+  <main class="center" id="center">
+    <div class="masthead">
+      <div>
+        <div class="kicker" id="date"></div>
+        <h1>Today</h1>
+      </div>
+      <div class="stats">
+        <div><b id="c-open">0</b> open</div>
+        <div><b id="c-waiting" class="ok">0</b> waiting</div>
+        <div><b id="c-in">0</b> in</div>
+        <div><b id="c-filed">0</b> filed</div>
+      </div>
+    </div>
+
+    <section class="section" id="sec-people">
+      <div class="section-head">
+        <div class="title green">People</div>
+        <div class="hint">solid mark = a human on the other end</div>
+      </div>
+      <div id="people-list"></div>
+    </section>
+
+    <section class="section" id="sec-needs">
+      <div class="section-head">
+        <div class="title terra">Needs you</div>
+        <div class="hint">only if ignoring it costs you</div>
+      </div>
+      <div id="needs-list"></div>
+    </section>
+
+    <section class="section hidden" id="sec-new-senders">
+      <div class="section-head">
+        <div class="title">New senders</div>
+        <div class="hint">one tap sets the rule for good</div>
+      </div>
+      <div class="card-list new-senders" id="new-senders-list"></div>
+    </section>
+
+    <section class="section hidden" id="sec-heads">
+      <div class="banner" id="heads-banner"></div>
+    </section>
+
+    <div class="cols">
+      <div id="col-onway" class="hidden">
+        <div class="section-head"><div class="title">On its way</div></div>
+        <div class="card-list pad-list" id="onway-list"></div>
+      </div>
+      <div id="col-waiting" class="hidden">
+        <div class="section-head"><div class="title">Waiting on them</div></div>
+        <div class="card-list pad-list" id="waiting-list"></div>
+      </div>
+    </div>
+
+    <section class="section hidden" id="sec-money">
+      <div class="section-head">
+        <div class="title">Money · this week</div>
+        <div class="hint">ledger</div>
+      </div>
+      <div class="card-list pad-list" id="money-list"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div class="title">Lanes</div>
+        <div class="hint">counts, never badges</div>
+      </div>
+      <div class="lane-grid" id="lane-grid"></div>
+    </section>
+
+    <div class="dashed" id="promo-line"></div>
+  </main>
+
+  <section class="pane" id="pane">
+    <div class="pane-empty" id="pane-empty">
+      <div class="big">Nothing selected.</div>
+      <div>Pick a People or Needs you item to read it here.</div>
+    </div>
+  </section>
+
+</div>
+<div class="toast hidden" id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
