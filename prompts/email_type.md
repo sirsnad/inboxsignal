@@ -23,5 +23,6 @@ Respond with only a JSON object. Include the optional fields only when the email
   "status": "<short shipment status for tracking: shipped, out for delivery, delivered, ...>",
   "eta": "<stated delivery estimate verbatim, for tracking>",
   "delivered": true/false,
-  "summary": "<one line of what this email says, max ~80 chars, for heads-up rows>"
+  "summary": "<one line of what this email says, max ~80 chars, for heads-up rows>",
+  "action_url": "<for alert/verification: the email's primary confirm/review URL, verbatim>"
 }

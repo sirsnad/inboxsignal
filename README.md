@@ -4,10 +4,19 @@ A personal view on top of Gmail that turns ~30 daily arrivals into a short
 briefing. Spec in `SPEC.md`, design mockups in `mockups/`, original build
 prompt in `PROMPT.md`.
 
-**Status: Phase 1 (read-only mirror).** The app reads mail, guesses sender
-rules, classifies email types, and renders the desktop Today screen and
-reading pane. It writes nothing to Gmail - the only requested OAuth scope is
-`gmail.readonly`. Actions, labels, and replies arrive in Phase 2.
+**Status: Phase 2 (actions).** On top of the Phase 1 read-only mirror:
+done/snooze with `Signal/` labels, reply and reply-all through Gmail with a
+starter draft in your voice and a 12-second hold before anything sends,
+Yes/No handling on Needs-you rows (the confirm link opens in a new tab -
+never fetched server-side), one-tap New-senders sorting, rule editing on the
+Senders screen, and an actions log ("What just happened in Gmail") where
+every entry is undoable for 12 seconds. The app never deletes, trashes, or
+archives, and never touches labels outside `Signal/`.
+
+Phase 2 adds the `gmail.modify` (labels only) and `gmail.send` scopes - if
+you have a Phase 1 `token.json`, delete it and rerun the backfill to
+re-consent. Phase 3 (lanes, digest parsers, unsubscribe, Cmd+K, phone) is
+next.
 
 ## Run the demo (no Gmail needed)
 

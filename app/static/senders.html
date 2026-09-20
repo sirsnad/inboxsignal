@@ -70,6 +70,8 @@ function initials(name) {
   return ((p[0]?.[0] || "?") + (p.length > 1 ? p[p.length - 1][0] : "")).toUpperCase();
 }
 
+let editing = null;
+
 function render() {
   const rows = all.filter((s) =>
     (filter === "all" || s.tier === filter) &&
@@ -80,25 +82,57 @@ function render() {
       ? `<div class="avatar">${esc(initials(s.name))}</div>`
       : `<div class="avatar hollow" style="background: var(--rail); border: 0;">${esc(initials(s.name))}</div>`;
     const badge = s.unsub_suggest
-      ? `<button class="pill" onclick="phase2(event)">Unsub</button>`
-      : `<span class="tier-badge ${person ? "person" : ""}">${esc(TIER_LABEL[s.tier] || "?")}</span>`;
-    return `<div class="row">
+      ? `<button class="pill" data-unsub>Unsub</button>`
+      : `<span class="tier-badge ${person ? "person" : ""}">${esc(TIER_LABEL[s.tier] || "?")}${s.confirmed ? "" : " ?"}</span>`;
+    const editor = editing === s.address ? `
+      <div class="row" style="background: var(--ground); flex-wrap: wrap;">
+        <div style="font-size:12px;color:var(--muted);width:100%">Set the rule for ${esc(s.name)} - one tap, permanent until changed:</div>
+        ${["person", "service", "feed", "promo", "notes"].map((t) =>
+          `<button class="pill ${s.tier === t ? "tinted" : ""}" data-set="${t}" data-addr="${esc(s.address)}">${TIER_LABEL[t]}</button>`).join("")}
+      </div>` : "";
+    return `<div class="row" data-row="${esc(s.address)}" style="cursor:pointer">
       ${avatar}
       <div class="grow">
         <div class="row-name" style="font-size:14px">${esc(s.name)}${s.domain ? ` · <span style="font-weight:400;color:var(--muted)">${esc(s.domain)}</span>` : ""}</div>
         <div class="evidence-line ${s.unsub_suggest ? "warn" : ""}">${esc(TIER_LABEL[s.tier] || "unsorted")}${s.route && s.tier !== "split" ? ` · ${esc(s.route)}` : ""}${s.evidence ? ` · ${esc(s.evidence)}` : ""}</div>
       </div>
       ${badge}
-    </div>`;
+    </div>${editor}`;
   }).join("") || `<div class="row"><div class="evidence-line">No senders match.</div></div>`;
+
+  $("rows").querySelectorAll("[data-row]").forEach((r) =>
+    r.addEventListener("click", () => {
+      editing = editing === r.dataset.row ? null : r.dataset.row;
+      render();
+    }));
+  $("rows").querySelectorAll("[data-unsub]").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toast("Unsubscribe (RFC 8058 / List-Unsubscribe) ships in Phase 3.");
+    }));
+  $("rows").querySelectorAll("[data-set]").forEach((b) =>
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      try {
+        const r = await fetch("/api/actions/rule", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address: b.dataset.addr, tier: b.dataset.set }),
+        });
+        if (!r.ok) throw new Error((await r.json()).detail || r.status);
+        const res = await r.json();
+        toast(res.description);
+        editing = null;
+        load();
+      } catch (err) { toast(String(err.message || err)); }
+    }));
 }
 
-function phase2(e) {
-  e.preventDefault();
+function toast(msg) {
   const t = $("toast");
-  t.textContent = "Phase 1 is a read-only mirror. Actions arrive in Phase 2.";
+  t.textContent = msg;
   t.classList.remove("hidden");
-  setTimeout(() => t.classList.add("hidden"), 3500);
+  clearTimeout(toast._h);
+  toast._h = setTimeout(() => t.classList.add("hidden"), 4000);
 }
 
 $("search").addEventListener("input", (e) => { query = e.target.value.toLowerCase().trim(); render(); });

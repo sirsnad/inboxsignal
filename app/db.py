@@ -117,10 +117,33 @@ CREATE TABLE IF NOT EXISTS sync_state (
     value TEXT
 );
 
+-- Replies waiting out the 12s undo hold (SPEC 4: hold the send; never rely
+-- on Gmail's own undo).
+CREATE TABLE IF NOT EXISTS pending_sends (
+    id INTEGER PRIMARY KEY,
+    thread_id TEXT REFERENCES threads(gmail_thread_id),
+    body TEXT,
+    reply_all INTEGER DEFAULT 0,
+    to_json TEXT,
+    created_at TEXT,
+    send_at TEXT,
+    sent_at TEXT,
+    canceled_at TEXT,
+    error TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_from ON messages(from_address);
 CREATE INDEX IF NOT EXISTS idx_messages_received ON messages(received_at);
 """
+
+
+# Additive column migrations for databases created by earlier phases.
+MIGRATIONS = [
+    "ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT",
+    "ALTER TABLE actions ADD COLUMN undo_json TEXT",
+    "ALTER TABLE threads ADD COLUMN returned INTEGER DEFAULT 0",
+]
 
 
 def connect() -> sqlite3.Connection:
@@ -134,6 +157,11 @@ def init(conn: sqlite3.Connection | None = None) -> sqlite3.Connection:
     own = conn is None
     conn = conn or connect()
     conn.executescript(SCHEMA)
+    for stmt in MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # column already exists
     for name in config.DEFAULT_LANES:
         conn.execute("INSERT OR IGNORE INTO lanes(name) VALUES (?)", (name,))
     conn.commit()

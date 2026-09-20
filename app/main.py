@@ -3,14 +3,15 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from . import admission, config, db
+from . import actions, admission, config, db, drafts
 
 log = logging.getLogger("signal.app")
 STATIC = Path(__file__).parent / "static"
@@ -26,20 +27,37 @@ async def _poll_loop():
         await asyncio.sleep(config.POLL_SECONDS)
 
 
+async def _actions_loop():
+    """Executes held sends after their 12s undo window and wakes snoozes."""
+    tick = 0
+    while True:
+        try:
+            def work(check_snoozes: bool):
+                with db.session() as conn:
+                    actions.execute_due_sends(conn)
+                    if check_snoozes:
+                        actions.wake_snoozed(conn)
+            await asyncio.to_thread(work, tick % 15 == 0)
+        except Exception as e:
+            log.warning("actions loop failed: %s", e)
+        tick += 1
+        await asyncio.sleep(2)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init().close()
-    task = None
+    tasks = [asyncio.create_task(_actions_loop())]
     if not config.DEMO and config.TOKEN_PATH.exists():
-        task = asyncio.create_task(_poll_loop())
+        tasks.append(asyncio.create_task(_poll_loop()))
     elif not config.DEMO:
         log.warning(
             "no token.json; run `python -m app.gmail.sync --backfill` first "
             "(or set SIGNAL_DEMO=1 for fixture data)"
         )
     yield
-    if task:
-        task.cancel()
+    for t in tasks:
+        t.cancel()
 
 
 app = FastAPI(title="Signal Inbox", lifespan=lifespan)
@@ -100,24 +118,39 @@ def api_thread(thread_id: str):
             when = last["received_at"]
 
         ask = db.loads(t["ask_summary"], {})
+        can_reply = not last["is_from_me"]
+        first_name = (last["from_name"] or "").split(" ")[0] or "them"
+        others = max(0, n - 1)
+        # SPEC 3.4 item 5: the footer states the Gmail side effect of the
+        # primary action.
+        if can_reply and others:
+            footer = (f"Reply goes out through Gmail as you. Reply all hits "
+                      f"{n} inboxes; the default here is {first_name}.")
+        elif can_reply:
+            footer = "Reply goes out through Gmail as you, in this thread."
+        else:
+            footer = "Done adds the label Signal/Done in Gmail. Nothing else."
         return {
             "thread_id": thread_id,
             "tier": tier,
+            "state": t["state"],
             "evidence": evidence,
             "subject": last["subject"] or t["subject"],
             "sender_name": last["from_name"] or (sender and sender["display_name"]) or last["from_address"],
             "sender_domain": last["from_address"].split("@")[-1],
             "initials": admission._initials(last["from_name"] or last["from_address"]),
             "recipients_summary": f"{recipients_summary} · {when}",
+            "first_name": first_name,
+            "others_count": others,
+            "can_reply": can_reply,
+            "message_id": last["gmail_message_id"],
             "pulled_out": {
                 "ask": ask.get("ask", ""),
                 "age_note": ask.get("age_note", ""),
                 "related": ask.get("related", ""),
             },
             "body": last["body_text"] or last["snippet"],
-            # SPEC 3.4 item 5: footer states the Gmail side effect of the
-            # primary action. Phase 1 has no actions yet.
-            "footer": "Read-only mirror: nothing here changes Gmail. Actions arrive in Phase 2.",
+            "footer": footer,
         }
 
 
@@ -161,6 +194,127 @@ def api_senders():
         for o in out:
             counts[o["tier"] or "?"] = counts.get(o["tier"] or "?", 0) + 1
         return {"senders": out, "counts": counts}
+
+
+# ---------- Phase 2: actions ----------
+
+class ThreadRef(BaseModel):
+    thread_id: str
+
+
+class SnoozeBody(BaseModel):
+    thread_id: str
+    preset: str = "monday"  # tomorrow | monday | week
+
+
+class ConfirmBody(BaseModel):
+    message_id: str
+    answer: str  # yes | no | ack
+
+
+class RuleBody(BaseModel):
+    address: str
+    tier: str
+    route: str | None = None
+    subrules: dict[str, str] | None = None
+
+
+class DraftBody(BaseModel):
+    mode: str = "reply"  # reply | nudge
+
+
+class SendBody(BaseModel):
+    body: str
+    reply_all: bool = False
+
+
+@app.post("/api/actions/done")
+def act_done(body: ThreadRef):
+    with db.session() as conn:
+        return actions.mark_done(conn, body.thread_id)
+
+
+def _snooze_until(preset: str) -> tuple[str, str]:
+    now = datetime.now().astimezone()
+    eight = dtime(8, 0)
+    if preset == "tomorrow":
+        target = datetime.combine(now.date() + timedelta(days=1), eight).astimezone()
+        label = "tomorrow at 8am"
+    elif preset == "week":
+        target = datetime.combine(now.date() + timedelta(days=7), eight).astimezone()
+        label = "in a week, at 8am"
+    else:
+        days = (7 - now.weekday()) % 7 or 7  # next Monday
+        target = datetime.combine(now.date() + timedelta(days=days), eight).astimezone()
+        label = "Monday at 8am"
+    return target.isoformat(), f"to People {label}"
+
+
+@app.post("/api/actions/snooze")
+def act_snooze(body: SnoozeBody):
+    until, label = _snooze_until(body.preset)
+    with db.session() as conn:
+        return actions.snooze(conn, body.thread_id, until, label)
+
+
+@app.post("/api/actions/confirm")
+def act_confirm(body: ConfirmBody):
+    with db.session() as conn:
+        try:
+            return actions.confirm(conn, body.message_id, body.answer)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.post("/api/actions/rule")
+def act_rule(body: RuleBody):
+    with db.session() as conn:
+        try:
+            return actions.set_rule(conn, body.address, body.tier,
+                                    body.route, body.subrules)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.post("/api/actions/{action_id}/undo")
+def act_undo(action_id: int):
+    with db.session() as conn:
+        try:
+            return actions.undo(conn, action_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.post("/api/thread/{thread_id}/draft")
+def thread_draft(thread_id: str, body: DraftBody):
+    with db.session() as conn:
+        try:
+            starter = drafts.make_starter(conn, thread_id, body.mode)
+            info = actions.reply_recipients(conn, thread_id, reply_all=True)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {
+            **starter,
+            "to_name": info["message"]["from_name"] or info["to"][0],
+            "others_count": len(info["others"]),
+        }
+
+
+@app.post("/api/thread/{thread_id}/send")
+def thread_send(thread_id: str, body: SendBody):
+    if not body.body.strip():
+        raise HTTPException(400, "empty reply")
+    with db.session() as conn:
+        try:
+            return actions.queue_send(conn, thread_id, body.body, body.reply_all)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+
+@app.get("/api/log")
+def api_log():
+    with db.session() as conn:
+        return {"log": actions.recent_log(conn)}
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

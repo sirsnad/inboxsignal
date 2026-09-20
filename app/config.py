@@ -31,10 +31,17 @@ MODELS = {
 
 PROMPTS_DIR = ROOT / "prompts"
 
-# Phase 1 is read-only: request nothing beyond readonly. Phase 2 adds
-# gmail.modify (Signal/ labels only) and gmail.send, which will require
-# a fresh consent.
-GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# Phase 2 scopes (SPEC 8): readonly for sync, modify strictly for labels
+# under the Signal/ prefix, send for replies as the user. Adding scopes
+# invalidates an old token.json - delete it and rerun the backfill consent.
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.send",
+]
+
+LABEL_PREFIX = "Signal/"
+UNDO_SECONDS = 12
 
 CREDENTIALS_PATH = ROOT / "credentials.json"
 TOKEN_PATH = ROOT / "token.json"

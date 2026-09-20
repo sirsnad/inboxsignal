@@ -90,6 +90,7 @@ def people(conn) -> list[dict]:
             "age_label": _age_label(t["age_days"]) if (t["age_days"] or 0) > 1 else "",
             "age_hot": (t["age_days"] or 0) >= 3,
             "following": following,
+            "returned": bool(t["returned"]),
             "note": "cc'd · someone else is replying" if following else "",
         })
     return out
@@ -100,9 +101,11 @@ def needs_you(conn) -> list[dict]:
     verification mail from services, or anything a rule routes to needs_you."""
     rows = conn.execute(
         """SELECT m.*, s.tier, s.route, s.address, s.display_name
-           FROM messages m JOIN senders s ON s.address = m.from_address
+           FROM messages m
+           JOIN senders s ON s.address = m.from_address
+           JOIN threads t ON t.gmail_thread_id = m.thread_id
            WHERE m.is_from_me = 0 AND m.email_type IN ('alert', 'verification')
-             AND m.received_at > ?
+             AND m.received_at > ? AND t.state NOT IN ('done', 'snoozed')
            ORDER BY m.received_at ASC""",
         (_iso_days_ago(config.BACKFILL_DAYS),),
     ).fetchall()
@@ -113,14 +116,19 @@ def needs_you(conn) -> list[dict]:
         ex = db.loads(m["extracted_json"], {})
         age = max(0, (_now() - datetime.fromisoformat(m["received_at"])).days)
         service = m["from_name"] or m["display_name"] or m["from_address"].split("@")[-1]
+        summary = ex.get("summary") or m["subject"] or ""
+        # Rows carry their actions inline (SPEC 3.1): a question-shaped alert
+        # gets Yes/No; an FYI-shaped one gets a single acknowledgement.
+        yesno = any(w in summary.lower() for w in ("confirm", "charge", "was this you", "payment"))
         out.append({
             "message_id": m["gmail_message_id"],
             "thread_id": m["thread_id"],
-            "title": f"{service}: {ex.get('summary') or m['subject']}",
+            "title": f"{service}: {summary}",
             "detail": m["snippet"][:110],
             "age_days": age,
             "age_label": _age_label(age) if age >= 1 else "",
             "age_hot": age >= 3,
+            "answer_mode": "yesno" if yesno else "ack",
         })
     return out
 
@@ -131,7 +139,7 @@ def waiting_on_them(conn) -> list[dict]:
         """SELECT t.*, s.display_name FROM threads t
            LEFT JOIN senders s ON s.address = t.counterpart
            WHERE t.last_from_me = 1 AND t.counterpart IS NOT NULL
-             AND t.counterpart != ? AND t.state != 'done'
+             AND t.counterpart != ? AND t.state NOT IN ('done', 'snoozed')
            ORDER BY t.last_message_at ASC""",
         (my,),
     ).fetchall()
@@ -354,6 +362,21 @@ def counters(conn, sections: dict) -> dict:
     }
 
 
+def recent_done(conn) -> list[dict]:
+    """Checkmark lines under Needs you: what was handled in the last day."""
+    rows = conn.execute(
+        """SELECT description, at FROM actions
+           WHERE (kind LIKE 'confirm_%' OR kind = 'done') AND undone_at IS NULL
+             AND at > ? ORDER BY id DESC LIMIT 4""",
+        (_iso_days_ago(1),),
+    ).fetchall()
+    out = []
+    for r in rows:
+        text = r["description"].split(".")[0]
+        out.append({"line": text, "at": r["at"]})
+    return out
+
+
 def today(conn) -> dict:
     sections = {
         "people": people(conn),
@@ -365,6 +388,7 @@ def today(conn) -> dict:
         "new_senders": new_senders(conn),
         "lanes": lanes(conn),
         "promotions": promotions(conn),
+        "recent_done": recent_done(conn),
     }
     local_now = datetime.now()
     return {
