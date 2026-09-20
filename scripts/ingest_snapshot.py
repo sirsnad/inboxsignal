@@ -10,6 +10,7 @@ later - message ids match Gmail's, so `INSERT OR CONFLICT` reconciles.
     SIGNAL_DB_PATH=real.db python -m scripts.ingest_snapshot my@gmail.com dir/*.jsonl
 """
 
+import html
 import json
 import sys
 from datetime import datetime, timezone
@@ -56,6 +57,10 @@ def main() -> None:
                 sender = (r.get("sender") or "").lower().strip("<> ")
                 if not sender or not r.get("id"):
                     continue
+                # Gmail snippets arrive HTML-escaped
+                subject = html.unescape(r.get("subject") or "")
+                snippet = html.unescape(r.get("snippet") or r.get("body") or "")
+                body = html.unescape(r.get("body") or "")
                 received = _iso(r.get("date"))
                 is_me = sender == my_address
                 unread = bool(r.get("unread"))
@@ -66,9 +71,9 @@ def main() -> None:
                     "from_name": _name_from(sender),
                     "to_addresses": [a.lower() for a in r.get("to") or []],
                     "cc_addresses": [a.lower() for a in r.get("cc") or []],
-                    "subject": r.get("subject") or "",
-                    "snippet": (r.get("snippet") or (r.get("body") or ""))[:160],
-                    "body_text": (r.get("body") or "")[:20000],
+                    "subject": subject,
+                    "snippet": snippet[:160],
+                    "body_text": body[:20000],
                     "list_unsubscribe": "",
                     "list_unsubscribe_post": "",
                     "rfc822_message_id": "",

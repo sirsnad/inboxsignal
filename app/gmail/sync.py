@@ -14,13 +14,25 @@ import logging
 import httpx
 
 from .. import config, db, rules
-from . import auth, parse
-from .client import GmailClient
+from . import parse
 
 log = logging.getLogger("signal.sync")
 
 
+def _make_client():
+    # Imported lazily: google-auth (and its cryptography dependency) is only
+    # needed when actually talking to Gmail, not for snapshot ingest.
+    from . import auth
+    from .client import GmailClient
+    return GmailClient(auth.get_credentials())
+
+
 def upsert_message(conn, m: dict) -> None:
+    # The thread row must exist first (FK); refresh_thread fills it in after.
+    conn.execute(
+        "INSERT OR IGNORE INTO threads (gmail_thread_id) VALUES (?)",
+        (m["thread_id"],),
+    )
     conn.execute(
         """INSERT INTO messages (gmail_message_id, thread_id, from_address, from_name,
                to_addresses, cc_addresses, subject, snippet, body_text, list_unsubscribe,
@@ -102,7 +114,7 @@ def refresh_thread(conn, thread_id: str, my_address: str) -> None:
     )
 
 
-def ingest_thread(conn, client: GmailClient, thread_id: str, my_address: str) -> None:
+def ingest_thread(conn, client, thread_id: str, my_address: str) -> None:
     data = client.get_thread(thread_id)
     for raw in data.get("messages", []):
         upsert_message(conn, parse.parse_message(raw, my_address))
@@ -110,8 +122,7 @@ def ingest_thread(conn, client: GmailClient, thread_id: str, my_address: str) ->
 
 
 def backfill() -> None:
-    creds = auth.get_credentials()
-    client = GmailClient(creds)
+    client = _make_client()
     profile = client.profile()
     my_address = profile["emailAddress"]
 
@@ -139,8 +150,7 @@ def backfill() -> None:
 def poll_once() -> bool:
     """One incremental pass. Returns False when a full re-backfill is needed
     (expired historyId)."""
-    creds = auth.get_credentials()
-    client = GmailClient(creds)
+    client = _make_client()
     with db.session() as conn:
         my_address = db.get_state(conn, "my_address")
         start = db.get_state(conn, "history_id")
